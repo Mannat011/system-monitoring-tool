@@ -1,65 +1,97 @@
 import streamlit as st
-import requests
+import psutil
 import time
-import plotly.express as px
+import pandas as pd
+import platform
+import os
 
-# Page settings
+# Page config
 st.set_page_config(page_title="System Monitor", layout="wide")
 
-st.title("💻 System Monitoring Dashboard")
+st.title("💻 Advanced System Monitoring Dashboard")
 
-# Sidebar controls
-st.sidebar.title("⚙️ Controls")
+# Sidebar
+st.sidebar.header("⚙️ Settings")
 refresh_rate = st.sidebar.slider("Refresh Rate (seconds)", 1, 5, 2)
 
-# Backend URL
-BASE_URL = "https://system-monitoring-tool.onrender.com"
-# Create columns
-col1, col2, col3 = st.columns(3)
+# System Info
+st.sidebar.markdown("### 💻 System Info")
+st.sidebar.write(f"OS: {platform.system()}")
+st.sidebar.write(f"Processor: {platform.processor()}")
 
-try:
-    # Fetch data from backend
-    response = requests.get(f"{BASE_URL}/metrics")
-    data = response.json()
+# Placeholder
+placeholder = st.empty()
 
-    cpu = data["cpu"]
-    memory = data["memory"]
-    disk = data["disk"]
+# Data storage
+if "data" not in st.session_state:
+    st.session_state.data = pd.DataFrame(columns=["CPU", "Memory", "Disk"])
 
-    # Display metrics
-    col1.metric("CPU Usage", f"{cpu}%")
-    col2.metric("Memory Usage", f"{memory}%")
-    col3.metric("Disk Usage", f"{disk}%")
+while True:
+    # System stats
+    cpu = psutil.cpu_percent(interval=1)
+    memory = psutil.virtual_memory().percent
 
-    # 🚨 Alerts
-    if cpu > 80:
-        st.warning("⚠️ High CPU Usage!")
+    # Cross-platform disk usage (BEST WAY)
+    disk = psutil.disk_usage(os.path.abspath(os.sep)).percent
 
-    if memory > 80:
-        st.warning("⚠️ High Memory Usage!")
+    # Store data
+    new_row = {"CPU": cpu, "Memory": memory, "Disk": disk}
+    st.session_state.data = pd.concat(
+        [st.session_state.data, pd.DataFrame([new_row])],
+        ignore_index=True
+    )
 
-    if disk > 80:
-        st.warning("⚠️ Disk Almost Full!")
+    # Keep last 20 records
+    if len(st.session_state.data) > 20:
+        st.session_state.data = st.session_state.data.iloc[-20:]
 
-    # 📊 Store history for graph
-    if "cpu_history" not in st.session_state:
-        st.session_state.cpu_history = []
+    with placeholder.container():
+        # Metrics
+        col1, col2, col3 = st.columns(3)
 
-    st.session_state.cpu_history.append(cpu)
+        col1.metric("🧠 CPU Usage", f"{cpu}%")
+        col2.metric("💾 Memory Usage", f"{memory}%")
+        col3.metric("🗄️ Disk Usage", f"{disk}%")
 
-    # Keep only last 20 values
-    st.session_state.cpu_history = st.session_state.cpu_history[-20:]
+        # Alerts
+        if cpu > 80:
+            st.error("🚨 High CPU Usage!")
+        elif cpu > 50:
+            st.warning("⚠️ Moderate CPU Usage")
+        else:
+            st.success("✅ CPU Normal")
 
-    # 📈 Create graph
-    fig = px.line(st.session_state.cpu_history, title="CPU Usage Trend")
-    st.plotly_chart(fig)
+        if memory > 80:
+            st.warning("⚠️ High Memory Usage!")
 
-    # 🕒 Timestamp
-    st.write("Last Updated:", data["timestamp"])
+        if disk > 80:
+            st.warning("⚠️ Disk Almost Full!")
 
-except:
-    st.error("⚠️ Backend not running!")
+        # Chart
+        st.subheader("📊 Usage Trends")
+        st.line_chart(st.session_state.data)
 
-# Auto refresh
-time.sleep(refresh_rate)
-st.rerun()
+        # Top Processes (FIXED VERSION 🔥)
+        st.subheader("🔥 Top Processes (by CPU usage)")
+
+        processes = []
+
+        for p in psutil.process_iter(['name']):
+            try:
+                cpu_usage = p.cpu_percent(interval=0.1)
+                processes.append({
+                    "name": p.info['name'],
+                    "cpu_percent": cpu_usage
+                })
+            except:
+                pass
+
+        top_processes = sorted(
+            processes,
+            key=lambda x: x['cpu_percent'],
+            reverse=True
+        )[:5]
+
+        st.table(top_processes)
+
+    time.sleep(refresh_rate)
